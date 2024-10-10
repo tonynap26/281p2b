@@ -4,6 +4,7 @@
 #define PAIRINGPQ_H
 
 #include <deque>
+#include <stack>
 #include <utility>
 
 #include "Eecs281PQ.hpp"
@@ -76,10 +77,10 @@ public:
         : BaseClass { other.compare } {
         nodeCount = 0;
         root = nullptr;
-        std::deque<TYPE> elts;
+        std::deque<Node*> elts;
         makeDeque(other.root, elts);
-        for (const auto &elmt : elts) {
-            addNode(elmt);
+        for (Node* node : elts) {
+            addNode(node->elt);
         }
     }
 
@@ -145,41 +146,40 @@ public:
     // this project.
     // Runtime: Amortized O(log(n))
     virtual void pop() {
+        if (!root) return;
         Node* oldRoot = root;
         if (!root->child) {
             root = nullptr;
         }
         else {
-            Node* current = root->child;
-            current->parent = nullptr;
-
-            Node* nextSibling = current->sibling;
-            current->sibling = nullptr;
-            while (nextSibling) {
-                Node* next = nextSibling->sibling;
-                nextSibling->sibling = nullptr;
-
-                if (this->compare(nextSibling->elt, current->elt)) {
-                    nextSibling->parent = nullptr;
-                    current->parent = nextSibling;
-                    current->sibling = nextSibling->child;
-                    if (current->sibling) current->sibling->parent = nextSibling;
-                    nextSibling->child = current;
-                    current = nextSibling;
-                }
-                else {
-                    nextSibling->parent = current;
-                    nextSibling->sibling = current->child;
-                    if (nextSibling->sibling) nextSibling->sibling->parent = current;
-                    current->child = nextSibling;
-                }
-                nextSibling = next;
+            std::vector<Node*> subtrees;
+            Node* child = root->child;
+            while (child) {
+                Node* next = child->sibling;
+                child->sibling = nullptr;
+                child->parent = nullptr;
+                subtrees.push_back(child);
+                child = next;
             }
-            root = current;
-            root->parent = nullptr;
+            std::vector<Node*> firstPass;
+            size_t i = 0;
+            while (i + 1 < subtrees.size()) {
+                Node* melded = meld(subtrees[i], subtrees[i + 1]);
+                firstPass.push_back(melded);
+                i += 2;
+            }
+            if (i < subtrees.size()) {
+                firstPass.push_back(subtrees[i]);
+            }
+            root = firstPass.back();
+            firstPass.pop_back();
+            while (!firstPass.empty()) {
+                root = meld(firstPass.back(), root);
+                firstPass.pop_back();
+            }
         }
         delete oldRoot;
-        nodeCount -= 1;
+        nodeCount--;
     }
 
     // Description: Return the most extreme (defined by 'compare') element of
@@ -212,29 +212,31 @@ public:
     //              extreme (as defined by comp) than the old priority.
     //
     // Runtime: As discussed in reading material.
-    void updateElt(Node* node, const TYPE &new_value) {
-        node->elt = new_value;
-        if (node != root) {
-            if (node->sibling) {
-                node->sibling->parent = node->parent;
-            }
-            if (node->parent->child == node) {
-                node->parent->child = node->sibling;
-            }
-            else {
-                Node* prevSibling = node->parent->child;
-                while (prevSibling->sibling != node) {
-                    prevSibling = prevSibling->sibling;
+    virtual void updateElt(Node* node, const TYPE &new_value) {
+        if (this->compare(node->elt, new_value)) {
+            node->elt = new_value;
+            if (node != root) {
+                if (node->sibling) {
+                    node->sibling->parent = node->parent;
                 }
-                prevSibling->sibling = node->sibling;
+                if (node->parent->child == node) {
+                    node->parent->child = node->sibling;
+                }
+                else {
+                    Node* prevSibling = node->parent->child;
+                    while (prevSibling->sibling != node) {
+                        prevSibling = prevSibling->sibling;
+                    }
+                    prevSibling->sibling = node->sibling;
+                }
+                node->sibling = nullptr;
+                node->parent = nullptr;
+                root = meld(root, node);
             }
-
-            node->sibling = nullptr;
-            node->parent = nullptr;
-
-            root = meld(root, node);
         }
+        else {}
     }
+
 
     // Description: Add a new element to the pairing heap. Returns a Node*
     //              corresponding to the newly added element.
@@ -262,14 +264,14 @@ private:
         if (!first) return second;
         if (!second) return first;
 
-        if (this->compare(second->elt, first->elt)) {
-            second->parent = nullptr;
+        if (this->compare(first->elt, second->elt)) {
             first->parent = second;
             first->sibling = second->child;
             if (first->sibling) {
                 first->sibling->parent = second;
             }
             second->child = first;
+            second->parent = nullptr;
             return second;
         }
         else {
@@ -279,17 +281,29 @@ private:
                 second->sibling->parent = first;
             }
             first->child = second;
+            first->parent = nullptr;
             return first;
         }
     }
 
+
     void destroy(Node* node) {
-        if (node) {
-            destroy(node->child);
-            destroy(node->sibling);
-            delete node;
+        if (!node) return;
+        std::stack<typename PairingPQ::Node*> nodes;
+        nodes.push(node);
+        while (!nodes.empty()) {
+            Node* current = nodes.top();
+            nodes.pop();
+            if (current->child) {
+                nodes.push(current->child);
+            }
+            if (current->sibling) {
+                nodes.push(current->sibling);
+            }
+            delete current;
         }
     }
+
 
     void makeDeque(Node* node, std::deque<Node*>& nodes) {
         if (node) {
